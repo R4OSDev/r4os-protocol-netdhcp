@@ -6,14 +6,14 @@ Projektstruktur seit 0.51.22
 
 Dieses Verzeichnis ist ein eigenstaendiges R4OS-SDK-Projekt fuer NETDHCP.R4P.
 
-Build:
+Build unter Windows und Linux:
 
-    cd Code\System\Protocols\NetDhcp
-    ..\..\..\DevTools\Zig\zig.exe build
+    Build.bat
+    ./Build.sh
 
 Artefakt:
 
-    zig-out\NETDHCP.R4P
+    Artifacts/Modules/NetDhcp/NETDHCP.R4P
 
 Manifest:
 
