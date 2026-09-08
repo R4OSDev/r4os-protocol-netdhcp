@@ -4,7 +4,7 @@
 
 ## Package
 
-- Version: `0.1.1`
+- Version: `0.1.2`
 - Image target: `/R4OS/PROTOCOLS/NETDHCP.R4P`
 - Image scope: `slim`
 - Canonical project manifest: `module.R4MF`
@@ -38,3 +38,10 @@ Detailed German technical notes from the migration are preserved in
 Original R4OS material is licensed under Apache License 2.0. See `LICENSE`
 and `NOTICE`. Any repository-specific external material is documented in
 `THIRD_PARTY_NOTICES.md`.
+
+
+The existing DhcpOp.client_ip selects the bound REQUEST format when nonzero:
+ciaddr carries that address and options 50/54 are omitted. A zero client_ip
+retains SELECTING. The kernel selects unicast renew or broadcast rebind.
+Missing router and DNS options stay zero/unconfigured, independently of the
+server ID. No external structure layout changed.

@@ -94,14 +94,21 @@ fn buildRequest(request: *r4os.abi.DhcpOp) void {
         request.result = r4os.abi.dhcp_result_buffer_small;
         return;
     };
-    pos = option(msg, pos, OPTION_REQUESTED_IP, &request.requested_ip) orelse {
-        request.result = r4os.abi.dhcp_result_buffer_small;
-        return;
-    };
-    pos = option(msg, pos, OPTION_SERVER_ID, &request.server_ip) orelse {
-        request.result = r4os.abi.dhcp_result_buffer_small;
-        return;
-    };
+    // Existing client_ip distinguishes a bound lease from SELECTING.
+    // Renew and rebind share ciaddr/options; the kernel owns their IP target.
+    if (isZeroIp(request.client_ip)) {
+        pos = option(msg, pos, OPTION_REQUESTED_IP, &request.requested_ip) orelse {
+            request.result = r4os.abi.dhcp_result_buffer_small;
+            return;
+        };
+        pos = option(msg, pos, OPTION_SERVER_ID, &request.server_ip) orelse {
+            request.result = r4os.abi.dhcp_result_buffer_small;
+            return;
+        };
+    } else {
+        @memcpy(msg[12..16], &request.client_ip);
+        writeBe16(msg, 10, 0);
+    }
     pos = end(msg, pos) orelse {
         request.result = r4os.abi.dhcp_result_buffer_small;
         return;
@@ -168,7 +175,7 @@ fn handleMessage(request: *r4os.abi.DhcpOp) void {
     request.offered_ip = readIp(payload, 16);
     request.server_ip = optionIp(payload, OPTION_SERVER_ID) orelse .{0} ** 4;
     request.netmask = optionIp(payload, OPTION_SUBNET_MASK) orelse .{ 255, 255, 255, 0 };
-    request.gateway_ip = optionIp(payload, OPTION_ROUTER) orelse request.server_ip;
+    request.gateway_ip = optionIp(payload, OPTION_ROUTER) orelse .{0} ** 4;
     request.lease_seconds = optionU32(payload, OPTION_LEASE_TIME) orelse 0;
     request.renew_seconds = optionU32(payload, OPTION_RENEW_TIME) orelse 0;
     request.rebind_seconds = optionU32(payload, OPTION_REBIND_TIME) orelse 0;
@@ -176,8 +183,8 @@ fn handleMessage(request: *r4os.abi.DhcpOp) void {
         request.dns_ip = dns_ip;
         request.dns_configured = 1;
     } else {
-        request.dns_ip = request.server_ip;
-        request.dns_configured = if (isZeroIp(request.server_ip)) 0 else 1;
+        request.dns_ip = .{0} ** 4;
+        request.dns_configured = 0;
     }
     if (typ == @intFromEnum(MessageType.offer)) {
         request.flags = r4os.abi.dhcp_flag_offer;
