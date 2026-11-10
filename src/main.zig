@@ -25,15 +25,18 @@ const MessageType = enum(u8) {
 };
 
 comptime {
-    asm (r4os.r4dev.protocolEntriesAsm("netdhcp_init", "netdhcp_shutdown", "netdhcp_query", "netdhcp_dispatch"));
+    if (!@import("builtin").is_test) asm (r4os.technical2.protocolEntriesAsm("netdhcp_init", "netdhcp_shutdown", "netdhcp_query", "netdhcp_dispatch"));
 }
 
-export fn netdhcp_init(api: *const r4os.r4dev.ProtocolApi) callconv(.c) i32 {
-    var ctx = r4os.r4dev.ProtocolContext.init(api);
-    ctx.logInfo("NETDHCP.R4P init");
-    _ = ctx.registerRole("net.dhcp", .net, 0);
-    _ = ctx.setStatus(.active, "DHCP R4P active");
-    return 0;
+export fn netdhcp_init(api: *const r4os.technical2.abi.ProtocolApi2) callconv(.c) i32 {
+    const view = r4os.technical2.Protocol.init(api) orelse return r4os.abi.network_error_backend;
+    const log = view.function("log_info") orelse return r4os.abi.err_no_fn;
+    const register = view.function("register_role") orelse return r4os.abi.err_no_fn;
+    const status = view.function("set_status") orelse return r4os.abi.err_no_fn;
+    log("NETDHCP.R4P init");
+    const registered = register("net.dhcp", @intFromEnum(r4os.abi.ProtocolCategory.net), 0);
+    if (registered != 0) return registered;
+    return status(@intFromEnum(r4os.abi.ProtocolState.active), "DHCP R4P active");
 }
 
 export fn netdhcp_shutdown() callconv(.c) i32 {
@@ -223,9 +226,12 @@ fn buildBase(request: *r4os.abi.DhcpOp) ?[]u8 {
 }
 
 fn requestFromBuffer(buffer: *const r4os.abi.ProtocolBuffer) ?*r4os.abi.DhcpOp {
-    if (buffer.data == null) return null;
-    if (buffer.len < @sizeOf(r4os.abi.DhcpOp)) return null;
-    return @ptrCast(@alignCast(buffer.data.?));
+    // The legacy operation is an exclusive in/out native record, despite
+    // the const transport metadata. No packet bytes are native-cast here.
+    const native = r4os.native_protocol_view;
+    var metadata = buffer.*;
+    const view = native.InOut(r4os.abi.DhcpOp).init(&metadata, native.Policy.record(r4os.abi.DhcpOp, .inout, .prefix)) catch return null;
+    return view.value;
 }
 
 fn option(buf: []u8, pos: usize, code: u8, data: []const u8) ?usize {
@@ -293,10 +299,9 @@ fn copyIp(dst: []u8, src: [4]u8) void {
 }
 
 fn readBe32(buf: []const u8, offset: usize) u32 {
-    return (@as(u32, buf[offset]) << 24) |
-        (@as(u32, buf[offset + 1]) << 16) |
-        (@as(u32, buf[offset + 2]) << 8) |
-        @as(u32, buf[offset + 3]);
+    var reader = r4os.binary_cursor.Reader.init(buf) catch unreachable;
+    _ = reader.take(offset) catch unreachable;
+    return reader.readInt(u32, .big) catch unreachable;
 }
 
 fn isZeroIp(ip: [4]u8) bool {
@@ -304,15 +309,15 @@ fn isZeroIp(ip: [4]u8) bool {
 }
 
 fn writeBe16(buf: []u8, offset: usize, value: u16) void {
-    buf[offset] = @intCast(value >> 8);
-    buf[offset + 1] = @intCast(value & 0xFF);
+    var writer = r4os.binary_cursor.Writer.init(buf) catch unreachable;
+    writer.position = offset;
+    writer.writeInt(u16, value, .big) catch unreachable;
 }
 
 fn writeBe32(buf: []u8, offset: usize, value: u32) void {
-    buf[offset] = @intCast(value >> 24);
-    buf[offset + 1] = @intCast((value >> 16) & 0xFF);
-    buf[offset + 2] = @intCast((value >> 8) & 0xFF);
-    buf[offset + 3] = @intCast(value & 0xFF);
+    var writer = r4os.binary_cursor.Writer.init(buf) catch unreachable;
+    writer.position = offset;
+    writer.writeInt(u32, value, .big) catch unreachable;
 }
 
 fn note(comptime text: []const u8) [64]u8 {
