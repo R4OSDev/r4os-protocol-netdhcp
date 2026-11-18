@@ -170,19 +170,20 @@ fn handleMessage(request: *r4os.abi.DhcpOp) void {
         request.result = r4os.abi.dhcp_result_shape;
         return;
     }
-    const typ = optionByte(payload, OPTION_MESSAGE_TYPE) orelse {
+    const options = readOptions(payload);
+    const typ = optionByte(options.message_type) orelse {
         request.result = r4os.abi.dhcp_result_no_type;
         return;
     };
     request.message_type = typ;
     request.offered_ip = readIp(payload, 16);
-    request.server_ip = optionIp(payload, OPTION_SERVER_ID) orelse .{0} ** 4;
-    request.netmask = optionIp(payload, OPTION_SUBNET_MASK) orelse .{ 255, 255, 255, 0 };
-    request.gateway_ip = optionIp(payload, OPTION_ROUTER) orelse .{0} ** 4;
-    request.lease_seconds = optionU32(payload, OPTION_LEASE_TIME) orelse 0;
-    request.renew_seconds = optionU32(payload, OPTION_RENEW_TIME) orelse 0;
-    request.rebind_seconds = optionU32(payload, OPTION_REBIND_TIME) orelse 0;
-    if (optionIp(payload, OPTION_DNS)) |dns_ip| {
+    request.server_ip = optionIp(options.server_id) orelse .{0} ** 4;
+    request.netmask = optionIp(options.subnet_mask) orelse .{ 255, 255, 255, 0 };
+    request.gateway_ip = optionIp(options.router) orelse .{0} ** 4;
+    request.lease_seconds = optionU32(options.lease) orelse 0;
+    request.renew_seconds = optionU32(options.renew) orelse 0;
+    request.rebind_seconds = optionU32(options.rebind) orelse 0;
+    if (optionIp(options.dns)) |dns_ip| {
         request.dns_ip = dns_ip;
         request.dns_configured = 1;
     } else {
@@ -253,40 +254,63 @@ fn cookieOk(payload: []const u8) bool {
     return payload[236] == MAGIC_COOKIE[0] and payload[237] == MAGIC_COOKIE[1] and payload[238] == MAGIC_COOKIE[2] and payload[239] == MAGIC_COOKIE[3];
 }
 
-fn optionByte(payload: []const u8, code: u8) ?u8 {
-    const data = optionData(payload, code) orelse return null;
+const ReplyOptions = struct {
+    message_type: ?[]const u8 = null,
+    server_id: ?[]const u8 = null,
+    subnet_mask: ?[]const u8 = null,
+    router: ?[]const u8 = null,
+    dns: ?[]const u8 = null,
+    lease: ?[]const u8 = null,
+    renew: ?[]const u8 = null,
+    rebind: ?[]const u8 = null,
+};
+
+fn readOptions(payload: []const u8) ReplyOptions {
+    var reply: ReplyOptions = .{};
+    var pos: usize = DHCP_FIXED_SIZE;
+    while (pos < payload.len) {
+        const code = payload[pos];
+        pos += 1;
+        if (code == OPTION_END) break;
+        if (code == 0) continue;
+        if (pos == payload.len) break;
+        const length = payload[pos];
+        pos += 1;
+        if (length > payload.len - pos) break;
+        const bytes = payload[pos..][0..length];
+        pos += length;
+        const field = switch (code) {
+            OPTION_MESSAGE_TYPE => &reply.message_type,
+            OPTION_SERVER_ID => &reply.server_id,
+            OPTION_SUBNET_MASK => &reply.subnet_mask,
+            OPTION_ROUTER => &reply.router,
+            OPTION_DNS => &reply.dns,
+            OPTION_LEASE_TIME => &reply.lease,
+            OPTION_RENEW_TIME => &reply.renew,
+            OPTION_REBIND_TIME => &reply.rebind,
+            else => continue,
+        };
+        if (field.* == null) field.* = bytes;
+    }
+    return reply;
+}
+
+fn optionByte(field: ?[]const u8) ?u8 {
+    const data = field orelse return null;
     if (data.len != 1) return null;
     return data[0];
 }
 
-fn optionIp(payload: []const u8, code: u8) ?[4]u8 {
-    const data = optionData(payload, code) orelse return null;
+fn optionIp(field: ?[]const u8) ?[4]u8 {
+    const data = field orelse return null;
     if (data.len < 4) return null;
     return .{ data[0], data[1], data[2], data[3] };
 }
 
-fn optionU32(payload: []const u8, code: u8) ?u32 {
-    const data = optionData(payload, code) orelse return null;
+fn optionU32(field: ?[]const u8) ?u32 {
+    const data = field orelse return null;
     if (data.len != 4) return null;
     return readBe32(data, 0);
-}
-
-fn optionData(payload: []const u8, code: u8) ?[]const u8 {
-    var pos: usize = DHCP_FIXED_SIZE;
-    while (pos < payload.len) {
-        const opt = payload[pos];
-        if (opt == OPTION_END) return null;
-        if (opt == 0) {
-            pos += 1;
-            continue;
-        }
-        if (pos + 1 >= payload.len) return null;
-        const len = payload[pos + 1];
-        if (pos + 2 + len > payload.len) return null;
-        if (opt == code) return payload[pos + 2 .. pos + 2 + len];
-        pos += 2 + len;
-    }
-    return null;
 }
 
 fn readIp(buf: []const u8, offset: usize) [4]u8 {
